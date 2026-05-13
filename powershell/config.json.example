@@ -1,0 +1,8 @@
+{
+    "ComputerInventoryPath": "your\\inventory\\path",
+    "SoftwareInventoryPath": "your\\inventory\\path",
+    "LogPath": "your\\log\\path",
+    "DomainName": "DomainName",
+    "AntivirusName": "AntivirusName",
+    "ApiUrl": "http://localhost:8000/api/colect"
+}
