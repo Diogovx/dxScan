@@ -2,10 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.scanner import ScannerPayload
-from app.schemas.responses import ComputerListResponse
+from app.schemas import ScannerPayload,ComputerDetailResponse, ComputerListResponse
 from app.repositories.inventory import ComputerRepository
-from app.services.inventory_service import InventoryService # Ajuste o import conforme o nome do seu arquivo
+from app.services.inventory_service import InventoryService
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["Inventory"])
 
@@ -21,13 +20,10 @@ def receive_inventory(payload: ScannerPayload, db: Session = Depends(get_db)):
         dict: A success message and the serial number of the processed computer.
     """
     try:
-        # 1. Instancia o repositório entregando a conexão com o banco
         repo = ComputerRepository(db)
         
-        # 2. Instancia o serviço entregando o repositório
         service = InventoryService(repo)
         
-        # 3. Processa o payload mágico
         computer = service.process_inventory_payload(payload)
         
         return {
@@ -36,16 +32,54 @@ def receive_inventory(payload: ScannerPayload, db: Session = Depends(get_db)):
         }
         
     except Exception as e:
-        # Se falhar, devolve um Erro 500 para quem chamou a API
         raise HTTPException(status_code=500, detail=f"Failed to process inventory: {str(e)}")
 
 
 @router.get("/", response_model=list[ComputerListResponse], status_code=200)
 def list_computers(db: Session = Depends(get_db)):
-    """Retorna a lista de todos os computadores cadastrados."""
+    """Retrieves a summary list of all registered computers.
+
+    Args:
+        db (Session): The database session injected by FastAPI.
+
+    Returns:
+        list[ComputerListResponse]: A list containing the summary details of all computers.
+    
+    Raises:
+        HTTPException: If an internal server error occurs during database retrieval.
+    """
     try:
         repo = ComputerRepository(db)
         computers = repo.get_all()
         return computers
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+
+@router.get("/{serial_num}", response_model=ComputerDetailResponse, status_code=200)
+def get_computer_details(serial_num: str, db: Session = Depends(get_db)):
+    """Retrieves the complete detailed profile of a specific computer by its Serial Number.
+
+    Args:
+        serial_num (str): The unique serial number of the target computer.
+        db (Session): The database session injected by FastAPI.
+
+    Returns:
+        ComputerDetailResponse: An object containing the computer's core details along 
+        with its nested relationships (disks, monitors, networks, and software).
+
+    Raises:
+        HTTPException (404): If no computer is found with the provided serial number.
+        HTTPException (500): If an internal server error occurs during database retrieval.
+    """
+    try:
+        repo = ComputerRepository(db)
+        computer = repo.get_by_serial(serial_num)
+        
+        if not computer:
+            raise HTTPException(status_code=404, detail="Computador não encontrado")
+            
+        return computer
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
