@@ -1,15 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from app.core.database import get_db
 from app.schemas import ScannerPayload,ComputerDetailResponse, ComputerListResponse
 from app.repositories.inventory import ComputerRepository
-from app.services.inventory_service import InventoryService
+from backend.app.services.inventory import InventoryService
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["Inventory"])
 
 @router.post("/", status_code=200)
-def receive_inventory(payload: ScannerPayload, db: Session = Depends(get_db)):
+async def receive_inventory(payload: ScannerPayload, db: Session = Depends(get_db)):
     """Receives inventory data from the PowerShell scanner and saves it to the database.
 
     Args:
@@ -19,18 +20,15 @@ def receive_inventory(payload: ScannerPayload, db: Session = Depends(get_db)):
     Returns:
         dict: A success message and the serial number of the processed computer.
     """
+    async def receive_inventory(payload: ScannerPayload, db: AsyncSession = Depends(get_db)):
     try:
         repo = ComputerRepository(db)
-        
         service = InventoryService(repo)
         
-        computer = service.process_inventory_payload(payload)
+        # Precisamos aguardar (await) a conclusão do processamento assíncrono
+        serial = await service.process_inventory_payload(payload)
         
-        return {
-            "message": "Inventory successfully processed", 
-            "computer_serial": computer.serial_num
-        }
-        
+        return {"message": "Inventory successfully processed", "computer_serial": serial}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process inventory: {str(e)}")
 
