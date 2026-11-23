@@ -1,18 +1,31 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from app.core.database import engine
-from app.models import scanner_data
+
+from app.core.database import Base, engine
+from app.models import scanner_data  # noqa: F401 - registers the models on Base.metadata
 from app.routes import inventory
 
-scanner_data.Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # create_all is a sync API; run_sync executes it on the async connection.
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    await engine.dispose()
+
 
 app = FastAPI(
-    title="DXSCAN API", 
+    title="DXSCAN API",
     description="API for hardware and software inventory collection",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.include_router(inventory.router)
 
+
 @app.get("/")
-def read_root():
+async def read_root():
     return {"message": "DXSCAN API is online and ready to receive data!"}
