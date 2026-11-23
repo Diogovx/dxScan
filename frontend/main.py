@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import requests
 import pandas as pd
@@ -5,7 +6,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="dxScan", page_icon="🛡️", layout="wide")
 
-API_URL = "http://localhost:8000/api/v1/inventory/"
+API_URL = os.getenv("API_URL","http://localhost:8000/api/v1/inventory/")
 
 @st.cache_data(ttl=60)
 def fetch_all_computers():
