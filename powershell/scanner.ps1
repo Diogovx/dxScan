@@ -175,6 +175,22 @@ function Get-NetworkInformation {
     } catch { return $null }
 }
 
+function Get-PrintersInformation {
+    try {
+        $printers = Get-CimInstance -ClassName Win32_Printer
+        $printerList = foreach ($ptr in $printers) {
+            $isLocal = if ($ptr.Network) { "Rede" } else { "Local" }
+            [PSCustomObject]@{
+                Name        = $ptr.Name
+                Driver_Name = $ptr.DriverName
+                Port_Name   = $ptr.PortName
+                Type        = $isLocal
+            }
+        }
+        return $printerList
+    } catch { return @() }
+}
+
 function Get-ProgramsInventory {
     try {
         return Get-Package | Where-Object { $_.ProviderName -ne "msu" -and $_.ProviderName -ne "PowerShellGet" } | Select-Object Name, Version | Sort-Object Name
@@ -189,9 +205,9 @@ function Invoke-SystemInventory {
     $monitoresInfo = Get-MonitorsInformation
     $diskInfo = Get-DiskInformation
     $networkInfo = Get-NetworkInformation
+    $printersInfo = Get-PrintersInformation
     $softwareInfo = Get-ProgramsInventory
 
-    # Objeto mestre com as chaves exatas em inglês que a API espera
     $jsonInventory = [PSCustomObject]@{
         "Verification_Date" = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         "System"            = $systemInfo
@@ -199,10 +215,10 @@ function Invoke-SystemInventory {
         "Monitors"          = $monitoresInfo
         "Disks"             = $diskInfo
         "Network"           = $networkInfo
+        "Printers"          = $printersInfo
         "Softwares"         = $softwareInfo
     }
 
-    # Salva o arquivo local (opcional)
     $baseFileName = "$($systemInfo.Serial_Number)_$($env:COMPUTERNAME)"
     $jsonHardwarePath = Join-Path -Path $config.ComputerInventoryPath -ChildPath "$baseFileName.json"
     $jsonInventory | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonHardwarePath -Encoding UTF8
@@ -210,16 +226,12 @@ function Invoke-SystemInventory {
     Write-Host "Inventário JSON gerado com sucesso em: $jsonHardwarePath" -ForegroundColor Green
 
     $JsonPayload = $jsonInventory | ConvertTo-Json -Depth 10 -Compress
-    
     $Utf8Bytes = [System.Text.Encoding]::UTF8.GetBytes($JsonPayload)
-    
     $ApiUrl = $config.ApiUrl
 
     try {
         Write-Host "Enviando dados para o DXSCAN API..." -ForegroundColor Cyan
-        
         $Response = Invoke-RestMethod -Uri $ApiUrl -Method Post -Body $Utf8Bytes -ContentType "application/json; charset=utf-8"
-        
         Write-Host "Sucesso! O backend respondeu: $($Response.message)" -ForegroundColor Green
         Write-Host "Serial do Computador salvo: $($Response.computer_serial)" -ForegroundColor Green
     } 

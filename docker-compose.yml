@@ -13,28 +13,25 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  redis:
-    image: redis:alpine
-    container_name: dxscan_redis
-    ports:
-      - "6379:6379"
-
   api:
     build: ./backend
     container_name: dxscan_api
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${DB_USER:-admin}:${DB_PASSWORD:-adminpassword}@db:5432/${DB_NAME:-dxscan_db}
     ports:
       - "8000:8000"
     depends_on:
       - db
-      - redis
 
   dashboard:
     build: ./frontend
     container_name: dxscan_dashboard
+    environment:
+      - API_URL=http://api:8000/api/v1/inventory/
     ports:
       - "8501:8501"
     depends_on:
-      - db
+      - api
 
 volumes:
   postgres_data:
