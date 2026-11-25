@@ -55,7 +55,8 @@ class InventoryService:
             return text.replace('\x00', '').strip()
         return text
 
-    async def process_inventory_payload(self, payload: ScannerPayload) -> str:
+    async def process_inventory_payload(self, payload: ScannerPayload) -> tuple[str, int]:
+        """Normalizes the scanner payload and upserts it. Returns (serial_num, computer_id)."""
         computer_data = {
             "serial_num": payload.system.serial_num,
             "hostname": payload.system.hostname,
@@ -83,6 +84,6 @@ class InventoryService:
             "softwares": [{"software_name": s.software_name, "version": s.version} for s in self.ensure_list(payload.softwares)]
         }
 
-        await self.repository.upsert_inventory(computer_data, relations)
-        
-        return payload.system.serial_num
+        computer_id = await self.repository.upsert_inventory(computer_data, relations)
+
+        return payload.system.serial_num, computer_id

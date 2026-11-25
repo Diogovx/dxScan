@@ -1,17 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+import time
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.schemas import ScannerPayload, ComputerDetailResponse, ComputerListResponse
 from app.repositories.inventory import ComputerRepository
+from app.repositories.logs import ScanLogRepository
 from app.services.inventory import InventoryService
+
+logger = logging.getLogger("dxscan.inventory")
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["Inventory"])
 
 
 @router.post("/", status_code=200)
-async def receive_inventory(payload: ScannerPayload, db: AsyncSession = Depends(get_db)):
+async def receive_inventory(request: Request, payload: ScannerPayload, db: AsyncSession = Depends(get_db)):
     """Receives inventory data from the PowerShell scanner and saves it to the database.
+
+    Every attempt, successful or not, is recorded in log_scanners.
 
     Args:
         payload (ScannerPayload): The JSON payload automatically validated by Pydantic.
@@ -20,14 +28,29 @@ async def receive_inventory(payload: ScannerPayload, db: AsyncSession = Depends(
     Returns:
         dict: A success message and the serial number of the processed computer.
     """
+    hostname = payload.system.hostname
+    request.state.access_detail = f"hostname={hostname} serial={payload.system.serial_num}"
+    started = time.perf_counter()
     try:
         repo = ComputerRepository(db)
         service = InventoryService(repo)
-        serial = await service.process_inventory_payload(payload)
-        return {"message": "Inventory successfully processed", "computer_serial": serial}
+        serial, computer_id = await service.process_inventory_payload(payload)
     except Exception as e:
         await db.rollback()
+        await _record_scan(db, hostname, "error", started, error_msg=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to process inventory: {str(e)}")
+
+    await _record_scan(db, hostname, "success", started, computer_id=computer_id)
+    return {"message": "Inventory successfully processed", "computer_serial": serial}
+
+
+async def _record_scan(db: AsyncSession, hostname: str, status: str, started: float, **kwargs) -> None:
+    # The inventory is already committed (or rolled back) at this point; a logging failure must not change the response.
+    try:
+        await ScanLogRepository(db).add(hostname, status, time.perf_counter() - started, **kwargs)
+    except Exception:
+        await db.rollback()
+        logger.exception("Falha ao gravar log_scanners para %s", hostname)
 
 
 @router.get("/", response_model=list[ComputerListResponse], status_code=200)

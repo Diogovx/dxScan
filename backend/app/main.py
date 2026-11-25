@@ -2,8 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.core.access_log import AccessLogMiddleware
 from app.core.database import Base, engine
-from app.models import scanner_data  # noqa: F401 - registers the models on Base.metadata
+from app.models import audit, scanner_data  # noqa: F401 - registers the models on Base.metadata
 from app.routes import inventory
 
 
@@ -22,6 +23,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(AccessLogMiddleware)
 
 app.include_router(inventory.router)
 
