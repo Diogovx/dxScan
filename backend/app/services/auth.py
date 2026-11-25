@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import ssl
+import time
 from dataclasses import dataclass
 from enum import Enum
 
@@ -15,6 +16,38 @@ logger = logging.getLogger("dxscan.auth")
 
 # sAMAccountName-style logins only: blocks UPN/DN tricks and LDAP filter metacharacters up front.
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+# AD puts the real reason for a failed bind in the diagnostic message: "... data 52e, v4563".
+_AD_DATA_CODE_RE = re.compile(r"\bdata ([0-9a-f]{3,4})\b", re.IGNORECASE)
+AD_BIND_REASONS = {
+    "525": "usuário não encontrado",
+    "52e": "senha incorreta",
+    "530": "login fora do horário permitido",
+    "531": "login não permitido nesta estação",
+    "532": "senha expirada",
+    "533": "conta desabilitada",
+    "701": "conta expirada",
+    "773": "usuário precisa trocar a senha",
+    "775": "conta bloqueada",
+}
+
+
+def describe_bind_failure(result: dict | None) -> str:
+    """Turns ldap3's ``conn.result`` after a failed bind into a short reason for the server log."""
+    result = result or {}
+    description = result.get("description") or "desconhecido"
+    match = _AD_DATA_CODE_RE.search(result.get("message") or "")
+    if not match:
+        return description
+    code = match.group(1).lower()
+    return f"{description} (AD data {code}: {AD_BIND_REASONS.get(code, 'código não mapeado')})"
+
+
+@dataclass(frozen=True)
+class ConnectionCheck:
+    ok: bool
+    detail: str
+    elapsed_ms: int
 
 
 class AuthFailure(str, Enum):
@@ -55,7 +88,26 @@ class LdapAuthenticator:
         # ldap3 is a blocking library; run it in a worker thread to keep the event loop free.
         return await asyncio.to_thread(self._authenticate_sync, username, password)
 
+    async def check_connection(self) -> ConnectionCheck:
+        """Opens a connection to the DC (TCP, plus the TLS handshake for ldaps://) without binding.
+
+        Proves the server is reachable and its certificate is accepted; it does not test any password.
+        """
+        return await asyncio.to_thread(self._check_connection_sync)
+
     # --- internals (sync, run in a thread) ---
+
+    def _check_connection_sync(self) -> ConnectionCheck:
+        started = time.perf_counter()
+        conn = self._probe_connection()
+        try:
+            conn.open()
+            ok, detail = True, "conectado"
+        except LDAPException as exc:
+            ok, detail = False, f"{type(exc).__name__}: {exc}"
+        finally:
+            conn.unbind()
+        return ConnectionCheck(ok=ok, detail=detail, elapsed_ms=round((time.perf_counter() - started) * 1000))
 
     def _authenticate_sync(self, username: str, password: str) -> DirectoryUser:
         username = (username or "").strip()
@@ -66,31 +118,45 @@ class LdapAuthenticator:
         conn = self._open_connection(f"{username}@{self.settings.LDAP_DOMAIN}", password)
         try:
             try:
-                if not conn.bind():
-                    raise AuthenticationError(AuthFailure.INVALID_CREDENTIALS)
+                bound = conn.bind()
             except LDAPException as exc:
-                logger.warning("LDAP bind error: %s", type(exc).__name__)
+                logger.warning(
+                    "AD: falha de conexão com %s ao autenticar '%s': %s: %s",
+                    self.settings.LDAP_SERVER_URI, username, type(exc).__name__, exc,
+                )
                 raise AuthenticationError(AuthFailure.DIRECTORY_UNAVAILABLE) from exc
+            if not bound:
+                logger.info("AD: bind recusado para '%s': %s", username, describe_bind_failure(conn.result))
+                raise AuthenticationError(AuthFailure.INVALID_CREDENTIALS)
 
             account_name = self._bound_account_name(conn)
             if not account_name:
                 # Fail closed: without a server-confirmed identity we cannot safely check the OU.
+                logger.warning("AD: 'Who am I?' não confirmou a identidade de '%s'; login recusado", username)
                 raise AuthenticationError(AuthFailure.DIRECTORY_UNAVAILABLE)
 
-            return self._find_in_allowed_ou(conn, account_name)
+            user = self._find_in_allowed_ou(conn, account_name)
+            logger.info("AD: login ok para '%s' (%s)", user.username, user.dn)
+            return user
         finally:
             conn.unbind()
 
-    def _open_connection(self, user: str, password: str) -> Connection:
+    def _server(self) -> Server:
         tls = Tls(validate=ssl.CERT_REQUIRED if self.settings.LDAP_VALIDATE_CERT else ssl.CERT_NONE)
-        server = Server(
+        return Server(
             self.settings.LDAP_SERVER_URI,
             get_info=NONE,
             tls=tls,
             connect_timeout=self.settings.LDAP_TIMEOUT_SECONDS,
         )
+
+    def _probe_connection(self) -> Connection:
+        """Anonymous connection used only to open the socket in check_connection; it never binds."""
+        return Connection(self._server(), receive_timeout=self.settings.LDAP_TIMEOUT_SECONDS, raise_exceptions=False)
+
+    def _open_connection(self, user: str, password: str) -> Connection:
         return Connection(
-            server,
+            self._server(),
             user=user,
             password=password,
             authentication=SIMPLE,
@@ -123,10 +189,14 @@ class LdapAuthenticator:
                 size_limit=2,
             )
         except LDAPException as exc:
-            logger.warning("LDAP search error: %s", type(exc).__name__)
+            logger.warning("AD: erro na busca em %s: %s: %s", self.settings.LDAP_ALLOWED_OU_DN, type(exc).__name__, exc)
             raise AuthenticationError(AuthFailure.DIRECTORY_UNAVAILABLE) from exc
 
         if not found or len(conn.entries) != 1:
+            logger.info(
+                "AD: '%s' autenticou, mas não está em %s; login recusado",
+                account_name, self.settings.LDAP_ALLOWED_OU_DN,
+            )
             raise AuthenticationError(AuthFailure.NOT_IN_ALLOWED_OU)
 
         entry = conn.entries[0]

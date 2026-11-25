@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Shared key the scanners send in the X-API-Key header. Empty = ingestion stays open (legacy mode).
     SCANNER_API_KEY: str = ""
 
+    # Console log level for the "dxscan.*" loggers: DEBUG, INFO, WARNING or ERROR
+    LOG_LEVEL: str = "INFO"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     def missing_auth_settings(self) -> list[str]:
