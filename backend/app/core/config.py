@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         }
         missing = [name for name, value in required.items() if not value]
         if len(self.JWT_SECRET) < 32:
-            missing.append("JWT_SECRET (minimum 32 caracters)")
+            missing.append("JWT_SECRET (minimum 32 characters)")
         return missing
 
 
