@@ -14,7 +14,7 @@
     - Um arquivo LOG para monitorar as execuções
 .NOTES
     Autor: Diogo Velozo Xavier
-    Versão: 2.0
+    Versão: 2.1
     Github: https://github.com/Diogovx/DXSCAN
 #>
 
@@ -229,9 +229,16 @@ function Invoke-SystemInventory {
     $Utf8Bytes = [System.Text.Encoding]::UTF8.GetBytes($JsonPayload)
     $ApiUrl = $config.ApiUrl
 
+    $Headers = @{}
+    if ($config.PSObject.Properties.Name -contains "ApiKey" -and $config.ApiKey) {
+        $Headers["X-API-Key"] = $config.ApiKey
+    } else {
+        Write-Host "Aviso: ApiKey não definida no config.json; o backend pode recusar o envio." -ForegroundColor Yellow
+    }
+
     try {
         Write-Host "Enviando dados para o DXSCAN API..." -ForegroundColor Cyan
-        $Response = Invoke-RestMethod -Uri $ApiUrl -Method Post -Body $Utf8Bytes -ContentType "application/json; charset=utf-8"
+        $Response = Invoke-RestMethod -Uri $ApiUrl -Method Post -Headers $Headers -Body $Utf8Bytes -ContentType "application/json; charset=utf-8"
         Write-Host "Sucesso! O backend respondeu: $($Response.message)" -ForegroundColor Green
         Write-Host "Serial do Computador salvo: $($Response.computer_serial)" -ForegroundColor Green
     } 
