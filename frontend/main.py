@@ -7,27 +7,92 @@ import plotly.express as px
 st.set_page_config(page_title="dxScan", page_icon="🛡️", layout="wide")
 
 API_URL = os.getenv("API_URL","http://localhost:8000/api/v1/inventory/")
+AUTH_URL = os.getenv("AUTH_URL", "http://localhost:8000/api/v1/auth/")
 
+
+class SessionExpired(Exception):
+    pass
+
+
+def logout():
+    st.session_state.pop("auth", None)
+    st.cache_data.clear()
+
+
+def login_screen():
+    st.title("dxScan")
+    st.caption("Entre com seu usuário do Active Directory (OU TI).")
+    with st.form("login"):
+        username = st.text_input("Usuário", placeholder="nome.sobrenome")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar", use_container_width=True)
+    if submitted:
+        try:
+            response = requests.post(f"{AUTH_URL}login", data={"username": username, "password": password}, timeout=15)
+        except requests.RequestException:
+            st.error("Não foi possível contatar a API.")
+            return
+        if response.status_code == 200:
+            st.session_state["auth"] = response.json()
+            st.rerun()
+        elif response.status_code == 503:
+            st.error("Active Directory indisponível no momento. Tente novamente.")
+        else:
+            st.error("Usuário ou senha inválidos, ou usuário sem permissão de acesso.")
+
+
+def _get(url, token):
+    response = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+    if response.status_code == 401:
+        raise SessionExpired()
+    return response
+
+# The token is a parameter so the cache is per user session (and dropped on logout).
 @st.cache_data(ttl=60)
-def fetch_all_computers():
+def fetch_all_computers(token):
     try:
-        response = requests.get(API_URL)
+        response = _get(API_URL, token)
         return response.json() if response.status_code == 200 else []
-    except:
+    except requests.RequestException:
         return []
 
 @st.cache_data(ttl=60)
-def fetch_computer_detail(serial):
+def fetch_computer_detail(serial, token):
     try:
-        response = requests.get(f"{API_URL}{serial}")
+        response = _get(f"{API_URL}{serial}", token)
         return response.json() if response.status_code == 200 else None
-    except:
+    except requests.RequestException:
         return None
 
+
+if "auth" not in st.session_state:
+    login_screen()
+    st.stop()
+
+TOKEN = st.session_state["auth"]["access_token"]
+CURRENT_USER = st.session_state["auth"]["user"]
+
+
+def get_detail(serial):
+    try:
+        return fetch_computer_detail(serial, TOKEN)
+    except SessionExpired:
+        logout()
+        st.rerun()
+
 st.sidebar.title("Controle dxScan")
+st.sidebar.caption(f"👤 {CURRENT_USER.get('display_name') or CURRENT_USER['username']}")
+if st.sidebar.button("Sair"):
+    logout()
+    st.rerun()
 page = st.sidebar.radio("Ir para:", ["Dashboard Geral", "Inventário Detalhado", "Gestão de Software"])
 
-data = fetch_all_computers()
+try:
+    data = fetch_all_computers(TOKEN)
+except SessionExpired:
+    logout()
+    st.warning("Sua sessão expirou. Entre novamente.")
+    st.rerun()
 df_raw = pd.DataFrame(data)
 
 if not df_raw.empty:
@@ -87,7 +152,7 @@ elif page == "Inventário Detalhado":
                                      format_func=lambda x: f"{df_filtered[df_filtered['serial_num']==x]['hostname'].values[0]} ({x})")
         
         if selected_serial:
-            detail = fetch_computer_detail(selected_serial)
+            detail = get_detail(selected_serial)
             if detail:
                 d1, d2, d3 = st.columns(3)
                 with d1:
@@ -123,7 +188,7 @@ elif page == "Gestão de Software":
                                format_func=lambda x: f"{df_filtered[df_filtered['serial_num']==x]['hostname'].values[0]} ({x})")
     
     if selected_pc:
-        detail = fetch_computer_detail(selected_pc)
+        detail = get_detail(selected_pc)
         if detail and detail['softwares']:
             df_sw = pd.DataFrame(detail['softwares'])
             
