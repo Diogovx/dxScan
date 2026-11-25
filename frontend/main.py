@@ -1,14 +1,16 @@
 import os
 
 import pandas as pd
-import plotly.express as px
 import requests
 import streamlit as st
+
+import dashboard
 
 st.set_page_config(page_title="dxScan", page_icon="🛡️", layout="wide")
 
 API_URL = os.getenv("API_URL","http://localhost:8000/api/v1/inventory/")
 AUTH_URL = os.getenv("AUTH_URL", "http://localhost:8000/api/v1/auth/")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8000/api/v1/dashboard/")
 
 
 class SessionExpired(Exception):
@@ -42,8 +44,8 @@ def login_screen():
             st.error("Usuário ou senha inválidos, ou usuário sem permissão de acesso.")
 
 
-def _get(url, token):
-    response = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+def _get(url, token, params=None):
+    response = requests.get(url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=30)
     if response.status_code == 401:
         raise SessionExpired()
     return response
@@ -61,6 +63,21 @@ def fetch_all_computers(token):
 def fetch_computer_detail(serial, token):
     try:
         response = _get(f"{API_URL}{serial}", token)
+        return response.json() if response.status_code == 200 else None
+    except requests.RequestException:
+        return None
+
+@st.cache_data(ttl=60)
+def fetch_dashboard(token, operating_systems, manufacturers, equipment_types, hide_runtimes):
+    """Filters are tuples so the cache key is hashable; the backend applies them in SQL."""
+    params = {
+        "operating_system": list(operating_systems),
+        "manufacturer": list(manufacturers),
+        "equipment_type": list(equipment_types),
+        "hide_runtimes": str(hide_runtimes).lower(),
+    }
+    try:
+        response = _get(DASHBOARD_URL, token, params=params)
         return response.json() if response.status_code == 200 else None
     except requests.RequestException:
         return None
@@ -100,8 +117,8 @@ if not df_raw.empty:
     st.sidebar.divider()
     st.sidebar.subheader("🔍 Filtros Globais")
     
-    f_os = st.sidebar.multiselect("Sistema Operacional", df_raw["operating_system"].unique())
-    f_man = st.sidebar.multiselect("Fabricante", df_raw["manufacturer"].unique())
+    f_os = st.sidebar.multiselect("Sistema Operacional", df_raw["operating_system"].dropna().unique())
+    f_man = st.sidebar.multiselect("Fabricante", df_raw["manufacturer"].dropna().unique())
 
     df_filtered = df_raw.copy()
     if f_os:
@@ -110,32 +127,20 @@ if not df_raw.empty:
         df_filtered = df_filtered[df_filtered["manufacturer"].isin(f_man)]
 else:
     df_filtered = df_raw
+    f_os, f_man = [], []
 
 if page == "Dashboard Geral":
-    st.title("Fleet Analytics")
-    
-    if df_filtered.empty:
-        st.info("Aguardando dados...")
+    st.title("Visão Geral da Frota")
+    equipment_types, hide_runtimes = dashboard.controls()
+    try:
+        dash_data = fetch_dashboard(TOKEN, tuple(f_os), tuple(f_man), tuple(equipment_types), hide_runtimes)
+    except SessionExpired:
+        logout()
+        st.rerun()
+    if dash_data is None:
+        st.error("Não foi possível carregar os dados do dashboard.")
     else:
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Máquinas", len(df_filtered))
-        m2.metric("Fabricantes", df_filtered["manufacturer"].nunique())
-        m3.metric("Média RAM", f"{df_filtered['ram_gb'].mean():.1f} GB")
-        m4.metric("S.O. Diferentes", df_filtered["operating_system"].nunique())
-
-        st.divider()
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Sistemas Operacionais")
-            fig_os = px.pie(df_filtered, names="operating_system", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig_os, use_container_width=True)
-        
-        with c2:
-            st.subheader("Distribuição por Fabricante")
-            fig_man = px.bar(df_filtered.groupby("manufacturer").size().reset_index(name='count'), 
-                            x="manufacturer", y="count", color="manufacturer")
-            st.plotly_chart(fig_man, use_container_width=True)
+        dashboard.render(dash_data)
 
 elif page == "Inventário Detalhado":
     st.title("Gerenciamento de Ativos")

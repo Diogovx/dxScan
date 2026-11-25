@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Coleta Informações centrais do sistema e atualiza um arquivo CSV central.
 .DESCRIPTION
