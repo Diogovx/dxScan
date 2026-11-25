@@ -1,15 +1,27 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.core.access_log import AccessLogMiddleware
+from app.core.config import settings
 from app.core.database import Base, engine
 from app.models import audit, scanner_data  # noqa: F401 - registers the models on Base.metadata
-from app.routes import inventory
+from app.routes import auth, inventory
+
+logger = logging.getLogger("dxscan")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    missing = settings.missing_auth_settings()
+    if missing:
+        raise RuntimeError(f"Configuração de autenticação ausente no .env: {', '.join(missing)}")
+    if not settings.SCANNER_API_KEY:
+        logger.warning("SCANNER_API_KEY vazio: POST /api/v1/inventory/ aceita envios sem autenticação (modo legado).")
+    if settings.LDAP_SERVER_URI.lower().startswith("ldap://"):
+        logger.warning("LDAP_SERVER_URI usa ldap:// sem TLS: as senhas trafegam em texto puro. Use ldaps://.")
+
     # create_all is a sync API; run_sync executes it on the async connection.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -26,6 +38,7 @@ app = FastAPI(
 
 app.add_middleware(AccessLogMiddleware)
 
+app.include_router(auth.router)
 app.include_router(inventory.router)
 
 

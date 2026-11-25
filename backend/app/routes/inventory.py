@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.security import get_current_user, require_scanner_key
 from app.schemas import ScannerPayload, ComputerDetailResponse, ComputerListResponse
 from app.repositories.inventory import ComputerRepository
 from app.repositories.logs import ScanLogRepository
@@ -15,11 +16,12 @@ logger = logging.getLogger("dxscan.inventory")
 router = APIRouter(prefix="/api/v1/inventory", tags=["Inventory"])
 
 
-@router.post("/", status_code=200)
+@router.post("/", status_code=200, dependencies=[Depends(require_scanner_key)])
 async def receive_inventory(request: Request, payload: ScannerPayload, db: AsyncSession = Depends(get_db)):
     """Receives inventory data from the PowerShell scanner and saves it to the database.
 
-    Every attempt, successful or not, is recorded in log_scanners.
+    Authenticated by the X-API-Key header (see SCANNER_API_KEY). Every attempt, successful or not,
+    is recorded in log_scanners.
 
     Args:
         payload (ScannerPayload): The JSON payload automatically validated by Pydantic.
@@ -53,9 +55,9 @@ async def _record_scan(db: AsyncSession, hostname: str, status: str, started: fl
         logger.exception("Falha ao gravar log_scanners para %s", hostname)
 
 
-@router.get("/", response_model=list[ComputerListResponse], status_code=200)
+@router.get("/", response_model=list[ComputerListResponse], status_code=200, dependencies=[Depends(get_current_user)])
 async def list_computers(db: AsyncSession = Depends(get_db)):
-    """Retrieves a summary list of all registered computers.
+    """Retrieves a summary list of all registered computers. Requires a Bearer token.
 
     Args:
         db (AsyncSession): The async database session injected by FastAPI.
@@ -73,9 +75,9 @@ async def list_computers(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
 
-@router.get("/{serial_num}", response_model=ComputerDetailResponse, status_code=200)
+@router.get("/{serial_num}", response_model=ComputerDetailResponse, status_code=200, dependencies=[Depends(get_current_user)])
 async def get_computer_details(serial_num: str, db: AsyncSession = Depends(get_db)):
-    """Retrieves the complete detailed profile of a specific computer by its Serial Number.
+    """Retrieves the complete detailed profile of a specific computer by its Serial Number. Requires a Bearer token.
 
     Args:
         serial_num (str): The unique serial number of the target computer.
