@@ -1,8 +1,9 @@
 import os
-import streamlit as st
-import requests
+
 import pandas as pd
 import plotly.express as px
+import requests
+import streamlit as st
 
 st.set_page_config(page_title="dxScan", page_icon="🛡️", layout="wide")
 

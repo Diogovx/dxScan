@@ -1,10 +1,10 @@
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from app.models import scanner_data
-from app.schemas.scanner import ScannerPayload
 from app.repositories.inventory import ComputerRepository
+from app.schemas.scanner import ScannerPayload
+
 
 class InventoryService:
     def __init__(self, repository: ComputerRepository):
@@ -30,7 +30,7 @@ class InventoryService:
         match = re.search(r'\d+', date_str)
         if match:
             timestamp_ms = int(match.group())
-            return datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
+            return datetime.fromtimestamp(timestamp_ms / 1000.0, tz=UTC)
         return None
 
     @staticmethod

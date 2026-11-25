@@ -1,9 +1,10 @@
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert  # Importe o INSERT nativo do Postgres
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
-from sqlalchemy.dialects.postgresql import insert # Importe o INSERT nativo do Postgres
 
 from app.models import scanner_data
+
 
 class ComputerRepository:
     def __init__(self, db: AsyncSession):
